@@ -275,6 +275,45 @@ describe('PolicyEngine', () => {
       expect(decision.action).toBe('allow');
       eng.close();
     });
+
+    it('rejects ReDoS patterns (consecutive wildcards)', () => {
+      const config: OverwatchConfig = {
+        version: 1,
+        servers: {
+          test: {
+            command: 'test',
+            policies: [
+              {
+                tools: ['dangerous**pattern'],
+                action: 'deny',
+              },
+            ],
+          },
+        },
+      };
+
+      expect(() => new PolicyEngine(config)).toThrow('Consecutive wildcards are not allowed');
+    });
+
+    it('rejects ReDoS patterns (excessive wildcards)', () => {
+      const config: OverwatchConfig = {
+        version: 1,
+        servers: {
+          test: {
+            command: 'test',
+            policies: [
+              {
+                // 4 wildcards > 3 allowed
+                tools: ['too*many*wild*cards*'],
+                action: 'deny',
+              },
+            ],
+          },
+        },
+      };
+
+      expect(() => new PolicyEngine(config)).toThrow('Too many wildcards');
+    });
   });
 
   describe('hot-reload (O-H18)', () => {

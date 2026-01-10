@@ -249,6 +249,17 @@ export class PolicyEngine extends EventEmitter {
       return { valid: false, error: 'Tool pattern contains invalid characters' };
     }
 
+    // Check for consecutive wildcards (DoS prevention)
+    if (pattern.includes('**')) {
+      return { valid: false, error: 'Consecutive wildcards are not allowed' };
+    }
+
+    // Check for excessive wildcards (ReDoS prevention)
+    const wildcardCount = (pattern.match(/\*/g) || []).length;
+    if (wildcardCount > 3) {
+      return { valid: false, error: 'Too many wildcards (max 3)' };
+    }
+
     // Validate glob syntax
     try {
       const regex = this.patternToRegex(pattern);
@@ -620,11 +631,11 @@ export class PolicyEngine extends EventEmitter {
 
     const regex = new RegExp(
       '^' +
-        pattern
-          .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-          .replace(/\*/g, '.*')
-          .replace(/\?/g, '.') +
-        '$'
+      pattern
+        .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*')
+        .replace(/\?/g, '.') +
+      '$'
     );
     return regex.test(path);
   }

@@ -14,6 +14,74 @@ import type { ApprovalHandler, ApprovalRequest } from '../approval/types.js';
 import type { AuditEntry } from '../audit/logger.js';
 
 // =============================================================================
+// JSON-RPC Error Codes
+// =============================================================================
+
+/**
+ * JSON-RPC error codes used by Overwatch.
+ * These follow the JSON-RPC 2.0 specification for server errors (-32000 to -32099).
+ */
+export const JSONRPCErrorCodes = {
+  /** Tool call denied by policy */
+  TOOL_DENIED: -32001,
+  /** Upstream server unavailable */
+  UPSTREAM_UNAVAILABLE: -32002,
+  /** Request timeout */
+  REQUEST_TIMEOUT: -32003,
+  /** Request too large */
+  REQUEST_TOO_LARGE: -32004,
+  /** Circuit breaker open */
+  CIRCUIT_BREAKER_OPEN: -32005,
+  /** Server shutting down */
+  SERVER_SHUTTING_DOWN: -32006,
+} as const;
+
+// =============================================================================
+// Environment Variable Filtering
+// =============================================================================
+
+/**
+ * Environment variable patterns to filter when spawning child processes.
+ * These patterns match sensitive credentials that should not be inherited.
+ */
+const SENSITIVE_ENV_PATTERNS: RegExp[] = [
+  // API keys and tokens
+  /^(ANTHROPIC|OPENAI|CLAUDE|GPT|HUGGINGFACE|COHERE|AI21|MISTRAL).*(_KEY|_TOKEN|_SECRET)$/i,
+  /^(AWS|AZURE|GCP|GOOGLE|DIGITALOCEAN|HEROKU|VERCEL|NETLIFY).*(_KEY|_SECRET|_TOKEN|_CREDENTIALS?)$/i,
+  /^(GITHUB|GITLAB|BITBUCKET|NPM|PYPI|RUBYGEMS).*(_TOKEN|_KEY|_SECRET)$/i,
+  /^(STRIPE|PAYPAL|BRAINTREE|SQUARE).*(_KEY|_SECRET)$/i,
+  /^(SENDGRID|MAILGUN|POSTMARK|SES|TWILIO).*(_KEY|_SECRET|_TOKEN|_SID)$/i,
+  /^(SLACK|DISCORD|TELEGRAM).*(_TOKEN|_SECRET|_KEY|_WEBHOOK)$/i,
+  /^(DATABASE|DB|MONGO|POSTGRES|MYSQL|REDIS).*(_URL|_PASSWORD|_SECRET|_KEY)$/i,
+  /^(JWT|SESSION|AUTH).*(_SECRET|_KEY|_TOKEN)$/i,
+  // Common secret patterns
+  /^.*_(SECRET|PASSWORD|PRIVATE_KEY|API_KEY|ACCESS_TOKEN|REFRESH_TOKEN)$/i,
+  /^(SECRET|PASSWORD|CREDENTIAL|PRIVATE)_/i,
+];
+
+/**
+ * Filters sensitive environment variables from the parent process.
+ * Returns a sanitized copy of process.env suitable for child processes.
+ *
+ * @param additionalEnv - Additional environment variables to include
+ * @returns Filtered environment variables
+ */
+function filterSensitiveEnv(additionalEnv: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const filtered: NodeJS.ProcessEnv = {};
+
+  for (const [key, value] of Object.entries(process.env)) {
+    // Skip sensitive variables
+    const isSensitive = SENSITIVE_ENV_PATTERNS.some((pattern) => pattern.test(key));
+    if (!isSensitive) {
+      filtered[key] = value;
+    }
+  }
+
+  // Merge with additional env (these are intentionally provided, so include them)
+  return { ...filtered, ...additionalEnv };
+}
+
+// =============================================================================
 // Circuit Breaker (O-H7)
 // =============================================================================
 
@@ -123,9 +191,7 @@ export class CircuitBreaker {
   }
 }
 
-// =============================================================================
 // Proxy Configuration
-// =============================================================================
 
 export interface MCPProxyOptions {
   serverName: string;
@@ -207,7 +273,7 @@ export class MCPProxy extends EventEmitter {
 
     this.upstreamProcess = spawn(command, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...env },
+      env: filterSensitiveEnv(env),
     });
 
     if (!this.upstreamProcess.stdin || !this.upstreamProcess.stdout) {
@@ -280,7 +346,7 @@ export class MCPProxy extends EventEmitter {
         // Send timeout error to client
         const response = createErrorResponse(
           id,
-          -32003,
+          JSONRPCErrorCodes.REQUEST_TIMEOUT,
           `Request timed out after ${this.requestTimeout}ms`
         );
         this.clientTransport.send(response);
@@ -330,7 +396,7 @@ export class MCPProxy extends EventEmitter {
       if (isRequest(msg) && msg.id) {
         const response = createErrorResponse(
           msg.id,
-          -32004,
+          JSONRPCErrorCodes.REQUEST_TOO_LARGE,
           `Request too large: ${msgSize} bytes exceeds limit of ${this.maxMessageSize} bytes`
         );
         this.clientTransport.send(response);
@@ -343,7 +409,7 @@ export class MCPProxy extends EventEmitter {
       if (isRequest(msg) && msg.id) {
         const response = createErrorResponse(
           msg.id,
-          -32005,
+          JSONRPCErrorCodes.CIRCUIT_BREAKER_OPEN,
           'Service temporarily unavailable (circuit breaker open)'
         );
         this.clientTransport.send(response);
@@ -371,7 +437,7 @@ export class MCPProxy extends EventEmitter {
           this.pendingRequests.delete(msg.id!);
           const response = createErrorResponse(
             msg.id!,
-            -32003,
+            JSONRPCErrorCodes.REQUEST_TIMEOUT,
             `Request timed out after ${this.requestTimeout}ms`
           );
           this.clientTransport.send(response);
@@ -418,7 +484,7 @@ export class MCPProxy extends EventEmitter {
       // Deny immediately
       const response = createErrorResponse(
         request.id!,
-        -32001,
+        JSONRPCErrorCodes.TOOL_DENIED,
         `Tool call denied: ${decision.reason}`,
         { riskLevel: decision.riskLevel }
       );
@@ -439,7 +505,7 @@ export class MCPProxy extends EventEmitter {
       if (!approved) {
         const response = createErrorResponse(
           request.id!,
-          -32001,
+          JSONRPCErrorCodes.TOOL_DENIED,
           'Tool call denied by user',
           { riskLevel: decision.riskLevel }
         );
@@ -461,7 +527,7 @@ export class MCPProxy extends EventEmitter {
         this.pendingRequests.delete(request.id!);
         const response = createErrorResponse(
           request.id!,
-          -32003,
+          JSONRPCErrorCodes.REQUEST_TIMEOUT,
           `Tool call timed out after ${this.requestTimeout}ms`
         );
         this.clientTransport.send(response);
@@ -550,7 +616,7 @@ export class MCPProxy extends EventEmitter {
       if (failMode === 'closed') {
         const response = createErrorResponse(
           id,
-          -32002,
+          JSONRPCErrorCodes.UPSTREAM_UNAVAILABLE,
           'Upstream server unavailable'
         );
         this.clientTransport.send(response);
@@ -663,7 +729,7 @@ export class MCPProxy extends EventEmitter {
       // Send cancellation to client
       const response = createErrorResponse(
         id,
-        -32006,
+        JSONRPCErrorCodes.SERVER_SHUTTING_DOWN,
         'Server shutting down'
       );
       this.clientTransport.send(response);

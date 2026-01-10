@@ -45,8 +45,23 @@ export async function loadConfig(configPath?: string): Promise<OverwatchConfig> 
 }
 
 async function loadConfigFile(filePath: string): Promise<OverwatchConfig> {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const config = parseYaml(content) as OverwatchConfig;
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf-8');
+  } catch (error) {
+    throw new Error(
+      `Failed to read config file ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  let config: OverwatchConfig;
+  try {
+    config = parseYaml(content) as OverwatchConfig;
+  } catch (error) {
+    throw new Error(
+      `Failed to parse YAML in ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   // Validate and merge with defaults
   return mergeWithDefaults(config);
