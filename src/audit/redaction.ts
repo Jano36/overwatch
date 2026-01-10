@@ -15,7 +15,7 @@ const apiKeyPatterns = [
   { name: 'OpenAI Key', pattern: /sk-[A-Za-z0-9]{48}/g },
   { name: 'OpenAI Project Key', pattern: /sk-proj-[A-Za-z0-9]{48}/g },
   { name: 'Anthropic Key', pattern: /sk-ant-[A-Za-z0-9\-]{95}/g },
-  { name: 'Stripe Key', pattern: /[sr]k_(live|test)_[A-Za-z0-9]{24}/g },
+  { name: 'Stripe Key', pattern: /[sr]k_(live|test)_[A-Za-z0-9]{23,}/g },
   { name: 'Slack Token', pattern: /xox[baprs]-[A-Za-z0-9\-]+/g },
   { name: 'Slack Webhook', pattern: /hooks\.slack\.com\/services\/[A-Za-z0-9\/]+/g },
   { name: 'npm Token', pattern: /npm_[A-Za-z0-9]{36}/g },
