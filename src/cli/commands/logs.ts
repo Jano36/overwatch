@@ -1,18 +1,21 @@
 import { Command } from 'commander';
-import { AuditLogger } from '../../audit/logger.js';
+import { AuditStore } from '../../audit/store.js';
+import type { AuditEntry } from '../../audit/logger.js';
 
 export const logsCommand = new Command('logs')
   .description('View audit log entries')
   .option('-n, --limit <count>', 'Number of entries to show', '20')
-  .option('--tail', 'Follow log in real-time')
+  .option('--tail', 'Follow log in real-time (not supported with persistent storage)')
   .option('--since <duration>', 'Show entries since duration (e.g., 1h, 30m, 7d)')
   .option('--server <name>', 'Filter by server name')
   .option('--risk <level>', 'Filter by risk level (safe, read, write, destructive, dangerous)')
   .option('--export <format>', 'Export format (json, csv, cef)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
+    // T3-10: Use AuditStore (SQLite) for persistence instead of in-memory AuditLogger
+    let store: AuditStore | undefined;
     try {
-      const logger = new AuditLogger();
+      store = new AuditStore();
 
       // Parse since duration
       let since: Date | undefined;
@@ -20,38 +23,26 @@ export const logsCommand = new Command('logs')
         since = parseDuration(options.since);
       }
 
-      // Export mode
-      if (options.export) {
-        const entries = await logger.query({
-          since,
-          server: options.server,
-          riskLevel: options.risk,
-          limit: parseInt(options.limit, 10),
-        });
-
-        const output = await logger.export(entries, options.export);
-        console.log(output);
-        return;
-      }
-
-      // Tail mode
+      // Tail mode - not supported with SQLite store (would require polling)
       if (options.tail) {
-        console.log('Following audit log (Ctrl+C to stop)...\n');
-
-        await logger.tail((entry) => {
-          printEntry(entry, options.json);
-        });
-
-        return;
+        console.log('Note: Real-time tailing is not supported with persistent storage.');
+        console.log('Showing recent entries instead...\n');
       }
 
-      // Normal query
-      const entries = await logger.query({
+      // Query from persistent store
+      const entries = store.query({
         since,
         server: options.server,
         riskLevel: options.risk,
         limit: parseInt(options.limit, 10),
       });
+
+      // Export mode
+      if (options.export) {
+        const output = exportEntries(entries, options.export);
+        console.log(output);
+        return;
+      }
 
       if (options.json) {
         console.log(JSON.stringify(entries, null, 2));
@@ -71,8 +62,49 @@ export const logsCommand = new Command('logs')
     } catch (error) {
       console.error('Failed to query logs:', error);
       process.exit(1);
+    } finally {
+      store?.close();
     }
   });
+
+/**
+ * Export entries to the specified format (T3-10).
+ */
+function exportEntries(entries: AuditEntry[], format: string): string {
+  switch (format.toLowerCase()) {
+    case 'json':
+      return JSON.stringify(entries, null, 2);
+
+    case 'csv': {
+      const headers = ['id', 'timestamp', 'server', 'tool', 'riskLevel', 'decision', 'args'];
+      const rows = entries.map(e => [
+        e.id,
+        e.timestamp.toISOString(),
+        e.server || '',
+        e.tool,
+        e.riskLevel,
+        e.decision,
+        e.args ? JSON.stringify(e.args) : '',
+      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+      return [headers.join(','), ...rows].join('\n');
+    }
+
+    case 'cef': {
+      // Common Event Format for SIEM integration
+      return entries.map(e => {
+        const severity = e.decision === 'denied' ? 7 : (e.riskLevel === 'dangerous' ? 5 : 3);
+        return `CEF:0|Overwatch|MCP|1.0|${e.tool}|Tool Call|${severity}|` +
+          `rt=${e.timestamp.getTime()} ` +
+          `src=${e.server || 'unknown'} ` +
+          `act=${e.decision} ` +
+          `cs1=${e.riskLevel} cs1Label=riskLevel`;
+      }).join('\n');
+    }
+
+    default:
+      throw new Error(`Unknown export format: ${format}. Supported: json, csv, cef`);
+  }
+}
 
 function parseDuration(duration: string): Date {
   const match = duration.match(/^(\d+)([mhd])$/);
@@ -101,17 +133,6 @@ function parseDuration(duration: string): Date {
   }
 
   return new Date(now - ms);
-}
-
-interface AuditEntry {
-  id: string;
-  timestamp: Date;
-  server?: string;
-  tool: string;
-  args?: Record<string, unknown>;
-  riskLevel: string;
-  decision: string;
-  duration?: number;
 }
 
 function printEntry(entry: AuditEntry, json: boolean): void {

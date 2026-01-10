@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import { EventEmitter } from 'events';
 import type { PolicyConfig, RiskLevel, OverwatchConfig } from '../config/types.js';
 
@@ -624,20 +625,122 @@ export class PolicyEngine extends EventEmitter {
     return '';
   }
 
-  private matchPath(path: string, pattern: string): boolean {
-    // Simple glob matching
-    if (pattern === '*') return true;
-    if (pattern === path) return true;
+  /**
+   * Normalize a path to prevent bypass attacks (T1-1).
+   * Handles: URL encoding, symlinks, null bytes, path traversal, case normalization.
+   */
+  private normalizePath(inputPath: string): string | null {
+    if (!inputPath) return null;
 
+    let normalized = inputPath;
+
+    // 1. Reject null bytes (security: prevents null byte injection)
+    if (normalized.includes('\0')) {
+      return null;
+    }
+
+    // 2. Decode URL-encoded characters (handles %2e%2e -> ..)
+    // Apply multiple rounds to catch double-encoding (%252e -> %2e -> .)
+    for (let i = 0; i < 3; i++) {
+      try {
+        const decoded = decodeURIComponent(normalized);
+        if (decoded === normalized) break;
+        normalized = decoded;
+      } catch {
+        // Invalid encoding, keep current
+        break;
+      }
+    }
+
+    // 3. Re-check for null bytes after decoding
+    if (normalized.includes('\0')) {
+      return null;
+    }
+
+    // 4. Normalize path separators and resolve . and ..
+    normalized = path.normalize(normalized);
+
+    // 5. Resolve to absolute path if relative
+    if (!path.isAbsolute(normalized)) {
+      normalized = path.resolve(normalized);
+    }
+
+    // 6. Attempt to resolve symlinks for real path
+    // This prevents symlink attacks where /allowed/link -> /etc
+    try {
+      if (fs.existsSync(normalized)) {
+        normalized = fs.realpathSync(normalized);
+      }
+    } catch {
+      // Path doesn't exist or can't resolve - use normalized path
+      // This is fine for policy checking non-existent paths
+    }
+
+    // 7. Case normalization for case-insensitive filesystems
+    // On macOS/Windows, /ETC/passwd should match /etc/passwd
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      normalized = normalized.toLowerCase();
+    }
+
+    return normalized;
+  }
+
+  /**
+   * Normalize a pattern for matching.
+   * Similar to path normalization but preserves wildcards.
+   */
+  private normalizePattern(pattern: string): string {
+    let normalized = pattern;
+
+    // Decode URL encoding in patterns (rare but possible)
+    try {
+      normalized = decodeURIComponent(normalized);
+    } catch {
+      // Keep original
+    }
+
+    // Normalize path separators but preserve wildcards
+    // Replace backslashes with forward slashes for consistency
+    normalized = normalized.replace(/\\/g, '/');
+
+    // Case normalization for case-insensitive filesystems
+    if (process.platform === 'darwin' || process.platform === 'win32') {
+      normalized = normalized.toLowerCase();
+    }
+
+    return normalized;
+  }
+
+  private matchPath(inputPath: string, pattern: string): boolean {
+    // Normalize the input path (handles encoding, symlinks, traversal)
+    const normalizedPath = this.normalizePath(inputPath);
+    if (normalizedPath === null) {
+      // Path contains security issues (null bytes), deny by not matching allow patterns
+      // and match all deny patterns
+      return pattern.startsWith('/etc') || pattern.startsWith('/root') || pattern.includes('passwd');
+    }
+
+    // Normalize the pattern
+    const normalizedPattern = this.normalizePattern(pattern);
+
+    // Universal wildcard
+    if (normalizedPattern === '*') return true;
+
+    // Exact match after normalization
+    if (normalizedPattern === normalizedPath) return true;
+
+    // Glob matching with normalized values
     const regex = new RegExp(
       '^' +
-      pattern
+      normalizedPattern
         .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-        .replace(/\*/g, '.*')
-        .replace(/\?/g, '.') +
-      '$'
+        .replace(/\*\*/g, '{{GLOBSTAR}}')  // Preserve ** for recursive matching
+        .replace(/\*/g, '[^/]*')            // * matches anything except path separator
+        .replace(/\?/g, '[^/]')             // ? matches single char except separator
+        .replace(/{{GLOBSTAR}}/g, '.*')     // ** matches anything including /
+      + '$'
     );
-    return regex.test(path);
+    return regex.test(normalizedPath);
   }
 
   private policyDescription(policy: PolicyConfig): string {

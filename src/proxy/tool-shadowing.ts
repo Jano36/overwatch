@@ -347,17 +347,207 @@ const SUSPICIOUS_DESCRIPTION_PATTERNS: Array<{
 ];
 
 /**
+ * Zero-width and invisible Unicode characters that can hide malicious content (T1-4).
+ * These characters are invisible but can be used to obfuscate text patterns.
+ */
+const INVISIBLE_CHARS = [
+  '\u200B', // Zero-width space
+  '\u200C', // Zero-width non-joiner
+  '\u200D', // Zero-width joiner
+  '\u200E', // Left-to-right mark
+  '\u200F', // Right-to-left mark
+  '\u2060', // Word joiner
+  '\u2061', // Function application
+  '\u2062', // Invisible times
+  '\u2063', // Invisible separator
+  '\u2064', // Invisible plus
+  '\uFEFF', // Zero-width no-break space (BOM)
+  '\u00AD', // Soft hyphen
+  '\u034F', // Combining grapheme joiner
+  '\u061C', // Arabic letter mark
+  '\u115F', // Hangul choseong filler
+  '\u1160', // Hangul jungseong filler
+  '\u17B4', // Khmer vowel inherent aq
+  '\u17B5', // Khmer vowel inherent aa
+  '\u180E', // Mongolian vowel separator
+  '\u3164', // Hangul filler
+  '\uFFA0', // Halfwidth hangul filler
+];
+
+/**
+ * Bidirectional text control characters that can visually reverse text (T1-4).
+ * These can make "malicious" appear as "suoicilam" visually.
+ */
+const BIDI_CONTROL_CHARS = [
+  '\u202A', // Left-to-right embedding
+  '\u202B', // Right-to-left embedding
+  '\u202C', // Pop directional formatting
+  '\u202D', // Left-to-right override
+  '\u202E', // Right-to-left override
+  '\u2066', // Left-to-right isolate
+  '\u2067', // Right-to-left isolate
+  '\u2068', // First strong isolate
+  '\u2069', // Pop directional isolate
+];
+
+/**
+ * Homoglyph character mappings (T2-8b).
+ * Maps visually similar characters from various scripts to ASCII equivalents.
+ * This catches attacks using Cyrillic, Greek, and other lookalike characters.
+ */
+const HOMOGLYPHS: Record<string, string> = {
+  // Cyrillic lowercase
+  '\u0430': 'a', // CYRILLIC SMALL LETTER A
+  '\u0441': 'c', // CYRILLIC SMALL LETTER ES
+  '\u0435': 'e', // CYRILLIC SMALL LETTER IE
+  '\u04BB': 'h', // CYRILLIC SMALL LETTER SHHA
+  '\u0456': 'i', // CYRILLIC SMALL LETTER BYELORUSSIAN-UKRAINIAN I
+  '\u0458': 'j', // CYRILLIC SMALL LETTER JE
+  '\u043E': 'o', // CYRILLIC SMALL LETTER O
+  '\u0440': 'p', // CYRILLIC SMALL LETTER ER
+  '\u0455': 's', // CYRILLIC SMALL LETTER DZE
+  '\u04AF': 'y', // CYRILLIC SMALL LETTER STRAIGHT U
+  '\u0445': 'x', // CYRILLIC SMALL LETTER HA
+  '\u0501': 'd', // CYRILLIC SMALL LETTER KOMI DE
+  '\u051B': 'q', // CYRILLIC SMALL LETTER QA
+  '\u051D': 'w', // CYRILLIC SMALL LETTER WE
+
+  // Cyrillic uppercase
+  '\u0410': 'A', // CYRILLIC CAPITAL LETTER A
+  '\u0412': 'B', // CYRILLIC CAPITAL LETTER VE
+  '\u0421': 'C', // CYRILLIC CAPITAL LETTER ES
+  '\u0415': 'E', // CYRILLIC CAPITAL LETTER IE
+  '\u041D': 'H', // CYRILLIC CAPITAL LETTER EN
+  '\u0406': 'I', // CYRILLIC CAPITAL LETTER BYELORUSSIAN-UKRAINIAN I
+  '\u0408': 'J', // CYRILLIC CAPITAL LETTER JE
+  '\u041A': 'K', // CYRILLIC CAPITAL LETTER KA
+  '\u041C': 'M', // CYRILLIC CAPITAL LETTER EM
+  '\u041E': 'O', // CYRILLIC CAPITAL LETTER O
+  '\u0420': 'P', // CYRILLIC CAPITAL LETTER ER
+  '\u0405': 'S', // CYRILLIC CAPITAL LETTER DZE
+  '\u0422': 'T', // CYRILLIC CAPITAL LETTER TE
+  '\u0425': 'X', // CYRILLIC CAPITAL LETTER HA
+
+  // Greek lowercase
+  '\u03B1': 'a', // GREEK SMALL LETTER ALPHA
+  '\u03B5': 'e', // GREEK SMALL LETTER EPSILON
+  '\u03B7': 'n', // GREEK SMALL LETTER ETA
+  '\u03B9': 'i', // GREEK SMALL LETTER IOTA
+  '\u03BA': 'k', // GREEK SMALL LETTER KAPPA
+  '\u03BD': 'v', // GREEK SMALL LETTER NU
+  '\u03BF': 'o', // GREEK SMALL LETTER OMICRON
+  '\u03C1': 'p', // GREEK SMALL LETTER RHO
+  '\u03C4': 't', // GREEK SMALL LETTER TAU
+  '\u03C5': 'u', // GREEK SMALL LETTER UPSILON
+  '\u03C7': 'x', // GREEK SMALL LETTER CHI
+  '\u03C9': 'w', // GREEK SMALL LETTER OMEGA
+
+  // Greek uppercase
+  '\u0391': 'A', // GREEK CAPITAL LETTER ALPHA
+  '\u0392': 'B', // GREEK CAPITAL LETTER BETA
+  '\u0395': 'E', // GREEK CAPITAL LETTER EPSILON
+  '\u0397': 'H', // GREEK CAPITAL LETTER ETA
+  '\u0399': 'I', // GREEK CAPITAL LETTER IOTA
+  '\u039A': 'K', // GREEK CAPITAL LETTER KAPPA
+  '\u039C': 'M', // GREEK CAPITAL LETTER MU
+  '\u039D': 'N', // GREEK CAPITAL LETTER NU
+  '\u039F': 'O', // GREEK CAPITAL LETTER OMICRON
+  '\u03A1': 'P', // GREEK CAPITAL LETTER RHO
+  '\u03A4': 'T', // GREEK CAPITAL LETTER TAU
+  '\u03A5': 'Y', // GREEK CAPITAL LETTER UPSILON
+  '\u03A7': 'X', // GREEK CAPITAL LETTER CHI
+
+  // Latin Extended
+  '\u0251': 'a', // LATIN SMALL LETTER ALPHA
+  '\u0261': 'g', // LATIN SMALL LETTER SCRIPT G
+  '\u0269': 'i', // LATIN SMALL LETTER IOTA
+  '\u0131': 'i', // LATIN SMALL LETTER DOTLESS I
+  '\u0237': 'j', // LATIN SMALL LETTER DOTLESS J
+
+  // Fullwidth Latin (full alphabet)
+  '\uFF41': 'a', '\uFF42': 'b', '\uFF43': 'c', '\uFF44': 'd', '\uFF45': 'e',
+  '\uFF46': 'f', '\uFF47': 'g', '\uFF48': 'h', '\uFF49': 'i', '\uFF4A': 'j',
+  '\uFF4B': 'k', '\uFF4C': 'l', '\uFF4D': 'm', '\uFF4E': 'n', '\uFF4F': 'o',
+  '\uFF50': 'p', '\uFF51': 'q', '\uFF52': 'r', '\uFF53': 's', '\uFF54': 't',
+  '\uFF55': 'u', '\uFF56': 'v', '\uFF57': 'w', '\uFF58': 'x', '\uFF59': 'y', '\uFF5A': 'z',
+  '\uFF21': 'A', '\uFF22': 'B', '\uFF23': 'C', '\uFF24': 'D', '\uFF25': 'E',
+  '\uFF26': 'F', '\uFF27': 'G', '\uFF28': 'H', '\uFF29': 'I', '\uFF2A': 'J',
+  '\uFF2B': 'K', '\uFF2C': 'L', '\uFF2D': 'M', '\uFF2E': 'N', '\uFF2F': 'O',
+  '\uFF30': 'P', '\uFF31': 'Q', '\uFF32': 'R', '\uFF33': 'S', '\uFF34': 'T',
+  '\uFF35': 'U', '\uFF36': 'V', '\uFF37': 'W', '\uFF38': 'X', '\uFF39': 'Y', '\uFF3A': 'Z',
+
+  // Mathematical Bold
+  '\uD835\uDC1A': 'a', '\uD835\uDC1B': 'b', '\uD835\uDC1C': 'c', '\uD835\uDC1D': 'd', '\uD835\uDC1E': 'e',
+  '\uD835\uDC1F': 'f', '\uD835\uDC20': 'g', '\uD835\uDC21': 'h', '\uD835\uDC22': 'i', '\uD835\uDC23': 'j',
+  '\uD835\uDC24': 'k', '\uD835\uDC25': 'l', '\uD835\uDC26': 'm', '\uD835\uDC27': 'n', '\uD835\uDC28': 'o',
+  '\uD835\uDC29': 'p', '\uD835\uDC2A': 'q', '\uD835\uDC2B': 'r', '\uD835\uDC2C': 's', '\uD835\uDC2D': 't',
+
+  // Symbols that look like letters
+  '\u2113': 'l', // SCRIPT SMALL L
+  '\u212E': 'e', // ESTIMATED SYMBOL
+  '\u212F': 'e', // SCRIPT SMALL E
+  '\u2134': 'o', // SCRIPT SMALL O
+
+  // Armenian
+  '\u0578': 'n', // ARMENIAN SMALL LETTER VO
+  '\u0585': 'o', // ARMENIAN SMALL LETTER OH
+  '\u057D': 'u', // ARMENIAN SMALL LETTER SEH
+
+  // Fullwidth numbers
+  '\uFF10': '0', '\uFF11': '1', '\uFF12': '2', '\uFF13': '3', '\uFF14': '4',
+  '\uFF15': '5', '\uFF16': '6', '\uFF17': '7', '\uFF18': '8', '\uFF19': '9',
+};
+
+/**
+ * Normalizes homoglyphs to their ASCII equivalents.
+ */
+function normalizeHomoglyphs(text: string): string {
+  let result = '';
+  for (const char of text) {
+    result += HOMOGLYPHS[char] ?? char;
+  }
+  return result;
+}
+
+/**
  * Normalizes text for pattern matching (O-H4).
- * Handles common obfuscation techniques.
+ * Handles common obfuscation techniques including zero-width character injection (T1-4).
  */
 function normalizeForPatternMatching(text: string): string {
   let normalized = text;
 
-  // Decode URL encoding
-  try {
-    normalized = decodeURIComponent(normalized.replace(/\+/g, ' '));
-  } catch {
-    // Keep original if decoding fails
+  // T1-4: Strip zero-width and invisible characters
+  // These can be inserted between characters to break pattern matching:
+  // "ignore\u200Ball\u200Bprevious" would not match "ignore all previous"
+  for (const char of INVISIBLE_CHARS) {
+    normalized = normalized.split(char).join('');
+  }
+
+  // T1-4: Strip bidirectional control characters
+  // These can visually reverse text to hide malicious content
+  for (const char of BIDI_CONTROL_CHARS) {
+    normalized = normalized.split(char).join('');
+  }
+
+  // Decode URL encoding (multiple rounds to catch double-encoding)
+  for (let i = 0; i < 3; i++) {
+    try {
+      const decoded = decodeURIComponent(normalized.replace(/\+/g, ' '));
+      if (decoded === normalized) break;
+      normalized = decoded;
+    } catch {
+      // Keep current if decoding fails
+      break;
+    }
+  }
+
+  // T1-4: Strip invisible chars again after URL decoding
+  // (they might have been URL-encoded)
+  for (const char of INVISIBLE_CHARS) {
+    normalized = normalized.split(char).join('');
+  }
+  for (const char of BIDI_CONTROL_CHARS) {
+    normalized = normalized.split(char).join('');
   }
 
   // Decode HTML entities
@@ -369,16 +559,46 @@ function normalizeForPatternMatching(text: string): string {
     '&#39;': "'",
     '&apos;': "'",
     '&nbsp;': ' ',
+    '&#x200b;': '', // Zero-width space as HTML entity
+    '&#x200c;': '', // Zero-width non-joiner
+    '&#x200d;': '', // Zero-width joiner
+    '&#8203;': '',  // Zero-width space decimal
   };
   for (const [entity, char] of Object.entries(htmlEntities)) {
     normalized = normalized.replace(new RegExp(entity, 'gi'), char);
   }
 
-  // Normalize Unicode to ASCII equivalents
+  // Decode numeric HTML entities (&#xNNNN; and &#NNNN;)
+  normalized = normalized.replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+    const codePoint = parseInt(hex, 16);
+    // Filter out invisible characters
+    if (INVISIBLE_CHARS.includes(String.fromCodePoint(codePoint)) ||
+        BIDI_CONTROL_CHARS.includes(String.fromCodePoint(codePoint))) {
+      return '';
+    }
+    return String.fromCodePoint(codePoint);
+  });
+  normalized = normalized.replace(/&#(\d+);/g, (_, dec) => {
+    const codePoint = parseInt(dec, 10);
+    if (INVISIBLE_CHARS.includes(String.fromCodePoint(codePoint)) ||
+        BIDI_CONTROL_CHARS.includes(String.fromCodePoint(codePoint))) {
+      return '';
+    }
+    return String.fromCodePoint(codePoint);
+  });
+
+  // Normalize Unicode to ASCII equivalents (NFKC handles many confusables)
   normalized = normalized.normalize('NFKC');
+
+  // T2-8b: Apply homoglyph normalization for remaining lookalikes
+  // NFKC doesn't catch all confusables (e.g., Cyrillic 'а' U+0430 looks like Latin 'a')
+  normalized = normalizeHomoglyphs(normalized);
 
   // Collapse multiple whitespace
   normalized = normalized.replace(/\s+/g, ' ');
+
+  // Trim leading/trailing whitespace
+  normalized = normalized.trim();
 
   return normalized;
 }

@@ -1,13 +1,15 @@
 import { Command } from 'commander';
-import { AuditLogger } from '../../audit/logger.js';
+import { AuditStore } from '../../audit/store.js';
 
 export const statsCommand = new Command('stats')
   .description('Show audit statistics')
   .option('--since <duration>', 'Statistics since duration (e.g., 1h, 30m, 7d)')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
+    // T3-10: Use AuditStore (SQLite) for persistence instead of in-memory AuditLogger
+    let store: AuditStore | undefined;
     try {
-      const logger = new AuditLogger();
+      store = new AuditStore();
 
       // Parse since duration
       let since: Date | undefined;
@@ -15,7 +17,7 @@ export const statsCommand = new Command('stats')
         since = parseDuration(options.since);
       }
 
-      const stats = await logger.getStats(since);
+      const stats = store.getStats(since);
 
       if (options.json) {
         console.log(JSON.stringify(stats, null, 2));
@@ -68,6 +70,8 @@ export const statsCommand = new Command('stats')
     } catch (error) {
       console.error('Failed to get statistics:', error);
       process.exit(1);
+    } finally {
+      store?.close();
     }
   });
 
