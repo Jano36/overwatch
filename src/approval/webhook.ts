@@ -6,6 +6,7 @@
  * and automatic retry with exponential backoff.
  */
 
+import { timingSafeEqual } from 'crypto';
 import type { ApprovalHandler, ApprovalRequest, ApprovalResponse } from './types.js';
 
 /**
@@ -302,17 +303,34 @@ export async function verifyWebhookSignature(
       .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Timing-safe comparison to prevent timing attacks
-    if (providedSig.length !== expectedSig.length) {
-      return false;
-    }
+    // T2-6: Timing-safe comparison using Node.js crypto.timingSafeEqual
+    // This prevents timing attacks that could reveal the correct signature
+    // by measuring response times.
+    //
+    // IMPORTANT: We must handle length differences in constant time.
+    // Instead of early-exiting on length mismatch (which leaks timing),
+    // we compare against a fixed-length buffer.
 
-    let mismatch = 0;
-    for (let i = 0; i < providedSig.length; i++) {
-      mismatch |= providedSig.charCodeAt(i) ^ expectedSig.charCodeAt(i);
-    }
+    // SHA-256 produces 32 bytes = 64 hex characters
+    const EXPECTED_LENGTH = 64;
 
-    return mismatch === 0;
+    // Normalize both signatures to expected length (64 chars for SHA-256)
+    // If provided signature is wrong length, we still compare but will fail
+    const providedBuffer = Buffer.alloc(EXPECTED_LENGTH);
+    const expectedBuffer = Buffer.from(expectedSig, 'utf8');
+
+    // Copy provided signature into buffer (truncated or padded with zeros)
+    const providedBytes = Buffer.from(providedSig, 'utf8');
+    providedBytes.copy(providedBuffer, 0, 0, Math.min(providedBytes.length, EXPECTED_LENGTH));
+
+    // Track if length was correct (but don't short-circuit)
+    const correctLength = providedSig.length === EXPECTED_LENGTH;
+
+    // Use Node.js timing-safe comparison
+    const signaturesMatch = timingSafeEqual(providedBuffer, expectedBuffer);
+
+    // Both conditions must be true
+    return correctLength && signaturesMatch;
   } catch {
     return false;
   }
