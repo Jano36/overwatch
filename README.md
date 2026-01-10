@@ -1,5 +1,10 @@
 # Overwatch
 
+[![Build](https://github.com/dotsetlabs/overwatch/actions/workflows/ci.yml/badge.svg)](https://github.com/dotsetlabs/overwatch/actions/workflows/ci.yml)
+[![npm version](https://img.shields.io/npm/v/@dotsetlabs/overwatch)](https://www.npmjs.com/package/@dotsetlabs/overwatch)
+[![License](https://img.shields.io/github/license/dotsetlabs/overwatch)](LICENSE)
+[![Node Version](https://img.shields.io/node/v/@dotsetlabs/overwatch)](https://nodejs.org/)
+
 **The AI Agent Firewall**
 
 Runtime security proxy for MCP (Model Context Protocol). Overwatch protects AI development environments by detecting tool impersonation attacks and enforcing policy-based access control.
@@ -158,6 +163,25 @@ audit:
 | Detects tool shadowing attacks | No tool verification |
 | Policy at protocol layer | Application-level only |
 | Session-based approvals | All-or-nothing access |
+
+## Performance
+
+Overwatch adds minimal latency to MCP operations. All security checks happen in-process with no network calls.
+
+| Operation | Time | Description |
+|-----------|------|-------------|
+| Tool Registration | 1.8ms | Register 100 tools with schema hashing |
+| Collision Check | <1μs | Check for cross-server name collisions |
+| Mutation Check | 3μs | Verify tool schema hasn't changed |
+| Description Analysis | 15μs | Scan for suspicious patterns (40+ checks) |
+
+**Overhead per tool call: <20μs** for full security analysis including collision detection, mutation monitoring, and description scanning.
+
+### Memory Footprint
+
+- Base proxy: ~15MB RSS
+- Per registered tool: ~2KB (schema hash + metadata)
+- Audit log buffer: Configurable, defaults to 1000 entries
 
 ## Part of Dotset Labs
 

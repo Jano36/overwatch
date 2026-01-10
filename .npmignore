@@ -1,0 +1,24 @@
+# Source files (dist/ is published, not src/)
+src/
+
+# Test files
+test/
+*.test.ts
+*.spec.ts
+vitest.config.ts
+coverage/
+
+# Development config
+.github/
+.eslintrc.json
+tsconfig.json
+*.tsbuildinfo
+
+# Documentation (README and LICENSE included via package.json files)
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
+
+# Local development
+.env*
+*.local.yaml
